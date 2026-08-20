@@ -1,0 +1,9 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "uvicorn main:app --host 0.0.0.0 --port $PORT"
+
+# Railway cron (FBPost_CronJobs) should call every minute:
+# GET /cron/run with header Authorization: Bearer $CRON_SECRET
+# or X-Cron-Secret: $CRON_SECRET
