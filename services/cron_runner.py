@@ -1,38 +1,17 @@
 import logging
-import random
 from datetime import datetime
-from typing import Any
 from zoneinfo import ZoneInfo
 
-from database import quotes_collection, schedules_collection, quote_helper
+from database import schedules_collection
 from models.schedule import Schedule
 from services.facebook import FacebookPostError, post_to_facebook
 from services.post_formatter import format_quote_post
+from services.quote_rotation import get_next_quote, record_successful_post
 from services.x_twitter import XPostError, post_to_x
 
 logger = logging.getLogger(__name__)
 
 X_DESTINATION = "x"
-
-
-async def _get_random_quote(quote_list_id: str | None) -> dict:
-    query: dict[str, Any] = {}
-    if quote_list_id:
-        query["quoteListId"] = quote_list_id
-
-    total = await quotes_collection.count_documents(query)
-    if total == 0 and quote_list_id:
-        total = await quotes_collection.count_documents({})
-        query = {}
-
-    if total == 0:
-        raise RuntimeError("No quotes available to post")
-
-    offset = random.randint(0, total - 1)
-    docs = await quotes_collection.find(query).skip(offset).to_list(length=1)
-    if not docs:
-        raise RuntimeError("Failed to fetch a random quote")
-    return quote_helper(docs[0])
 
 
 def _schedule_is_due(schedule: Schedule, now: datetime) -> bool:
@@ -83,9 +62,14 @@ async def run_due_schedules(now: datetime | None = None) -> dict:
         }
 
         try:
-            quote = await _get_random_quote(schedule.quoteListId)
+            quote = await get_next_quote(
+                schedule.quoteListId,
+                schedule.pageIds,
+                now=now,
+            )
             message = format_quote_post(quote)
             schedule_result["quoteId"] = quote.get("id")
+            schedule_result["listIndex"] = quote.get("listIndex")
         except Exception as exc:
             logger.exception("Schedule %s failed before posting", schedule.id)
             schedule_result["error"] = str(exc)
@@ -105,6 +89,13 @@ async def run_due_schedules(now: datetime | None = None) -> dict:
             try:
                 post_result = await _post_to_destination(page_id, message)
                 destination_result.update({"ok": True, **post_result})
+                await record_successful_post(
+                    quote_list_id=schedule.quoteListId,
+                    quote_id=quote["id"],
+                    page_id=page_id,
+                    schedule_id=schedule.id,
+                    now=now,
+                )
                 logger.info(
                     "Posted schedule %s to %s (postId=%s)",
                     schedule.id,
