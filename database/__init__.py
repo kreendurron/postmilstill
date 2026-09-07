@@ -17,6 +17,9 @@ except Exception as e:
 # Access the database
 database = client[DATABASE_NAME]
 quotes_collection = database.get_collection("quotes")
+schedules_collection = database.get_collection("schedules")
+quote_list_cursors_collection = database.get_collection("quote_list_cursors")
+post_history_collection = database.get_collection("post_history")
 
 def quote_helper(quote) -> dict:
     return {
