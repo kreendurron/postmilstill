@@ -1,4 +1,8 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
+
+QuoteSelectionMode = Literal["sequential", "random_by_author"]
 
 
 class Schedule(BaseModel):
@@ -14,5 +18,12 @@ class Schedule(BaseModel):
     quoteListId: str | None = Field(
         default=None,
         description="Optional quote list/filter id (e.g. hope list UUID)",
+    )
+    selectionMode: QuoteSelectionMode = Field(
+        default="sequential",
+        description=(
+            "How to pick the next quote: sequential cursor through the list, "
+            "or random_by_author (uniform author, then random quote)"
+        ),
     )
     enabled: bool = True

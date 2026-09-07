@@ -32,6 +32,7 @@ async def _load_schedules() -> list[Schedule]:
                 timezone=doc.get("timezone", "America/Chicago"),
                 pageIds=doc.get("pageIds", []),
                 quoteListId=doc.get("quoteListId"),
+                selectionMode=doc.get("selectionMode", "sequential"),
                 enabled=doc.get("enabled", True),
             )
         )
@@ -66,6 +67,7 @@ async def run_due_schedules(now: datetime | None = None) -> dict:
                 schedule.quoteListId,
                 schedule.pageIds,
                 now=now,
+                selection_mode=schedule.selectionMode,
             )
             message = format_quote_post(quote)
             schedule_result["quoteId"] = quote.get("id")
