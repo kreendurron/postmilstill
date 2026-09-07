@@ -3,8 +3,6 @@ import random
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from bson.errors import InvalidId
-from bson.objectid import ObjectId
 from pymongo import ReturnDocument
 
 from database import (
@@ -13,7 +11,7 @@ from database import (
     quote_helper,
     quotes_collection,
 )
-from models.schedule import QuoteSelectionMode
+from models.schedule import OrderType
 
 logger = logging.getLogger(__name__)
 
@@ -50,29 +48,6 @@ async def _was_posted_recently(
     return existing is not None
 
 
-async def _get_last_posted_author(page_ids: list[str]) -> str | None:
-    last_post = await post_history_collection.find_one(
-        {"pageId": {"$in": page_ids}},
-        sort=[("postedAt", -1)],
-    )
-    if not last_post:
-        return None
-
-    quote_id = last_post.get("quoteId")
-    if not quote_id:
-        return None
-
-    try:
-        quote_doc = await quotes_collection.find_one({"_id": ObjectId(quote_id)})
-    except InvalidId:
-        return None
-
-    if not quote_doc:
-        return None
-
-    return quote_doc.get("author", "Unknown")
-
-
 async def _reserve_next_index(quote_list_id: str, list_size: int, now: datetime) -> int:
     await quote_list_cursors_collection.update_one(
         {"quoteListId": quote_list_id},
@@ -100,12 +75,13 @@ async def _set_cursor_index(quote_list_id: str, index: int, now: datetime) -> No
     )
 
 
-async def _pick_sequential(
+async def choose_next_quote_id(
     quotes: list[dict],
     list_key: str,
     page_ids: list[str],
     now: datetime,
 ) -> tuple[dict, int]:
+    """Sequential cursor through list position order with 24h same-page dedupe."""
     start_index = await _reserve_next_index(list_key, len(quotes), now)
     chosen_index = start_index
 
@@ -138,11 +114,12 @@ async def _pick_sequential(
     return quotes[chosen_index], chosen_index
 
 
-async def _pick_random_by_author(
+async def _choose_random_quote_id(
     quotes: list[dict],
     page_ids: list[str],
     now: datetime,
 ) -> tuple[dict, int]:
+    """Uniform random among quotes not posted to these pages within 24h."""
     eligible: list[dict] = []
     for quote in quotes:
         quote_id = str(quote["_id"])
@@ -156,37 +133,24 @@ async def _pick_random_by_author(
         )
         eligible = quotes
 
-    by_author: dict[str, list[dict]] = {}
-    for quote in eligible:
-        author = quote.get("author", "Unknown")
-        by_author.setdefault(author, []).append(quote)
-
-    last_author = await _get_last_posted_author(page_ids)
-    authors = list(by_author.keys())
-    if last_author and len(authors) > 1:
-        different_authors = [author for author in authors if author != last_author]
-        chosen_author = random.choice(different_authors or authors)
-    else:
-        chosen_author = random.choice(authors)
-
-    selected = random.choice(by_author[chosen_author])
+    selected = random.choice(eligible)
     chosen_index = quotes.index(selected)
     logger.info(
-        "Random-by-author pick: author=%s index=%s quoteId=%s",
-        chosen_author,
+        "Random pick: author=%s index=%s quoteId=%s",
+        selected.get("author", "Unknown"),
         chosen_index,
         str(selected["_id"]),
     )
     return selected, chosen_index
 
 
-async def get_next_quote(
+async def choose_quote_id(
     quote_list_id: str | None,
     page_ids: list[str],
+    order_type: OrderType = "sequential",
     now: datetime | None = None,
-    selection_mode: QuoteSelectionMode = "sequential",
 ) -> dict:
-    """Pick the next quote using the configured selection mode and 24h page dedup."""
+    """Pick the next quote honoring schedule.orderType and 24h same-page dedupe."""
     now = now or datetime.now(tz=timezone.utc)
     list_key = quote_list_id or "__all__"
     quotes = await _load_quote_list(quote_list_id)
@@ -194,18 +158,30 @@ async def get_next_quote(
     if not quotes:
         raise RuntimeError("No quotes available to post")
 
-    if selection_mode == "random_by_author":
-        selected, chosen_index = await _pick_random_by_author(quotes, page_ids, now)
-    elif selection_mode == "sequential":
-        selected, chosen_index = await _pick_sequential(quotes, list_key, page_ids, now)
+    if order_type == "random":
+        selected, chosen_index = await _choose_random_quote_id(quotes, page_ids, now)
+    elif order_type == "sequential":
+        selected, chosen_index = await choose_next_quote_id(
+            quotes, list_key, page_ids, now
+        )
     else:
-        exhaustive: QuoteSelectionMode = selection_mode
-        raise ValueError(f"Unsupported selection mode: {exhaustive}")
+        exhaustive: OrderType = order_type
+        raise ValueError(f"Unsupported orderType: {exhaustive}")
 
     result = quote_helper(selected)
     result["listIndex"] = chosen_index
     result["quoteListId"] = list_key
     return result
+
+
+async def get_next_quote(
+    quote_list_id: str | None,
+    page_ids: list[str],
+    now: datetime | None = None,
+    order_type: OrderType = "sequential",
+) -> dict:
+    """Backward-compatible alias for choose_quote_id."""
+    return await choose_quote_id(quote_list_id, page_ids, order_type, now)
 
 
 async def record_successful_post(

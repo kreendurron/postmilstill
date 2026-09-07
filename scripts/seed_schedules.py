@@ -17,7 +17,6 @@ DEFAULT_SCHEDULES = [
         timezone="America/Chicago",
         pageIds=["x", POSTMILSTILL_FB_PAGE],
         quoteListId=HOPE_LIST_ID,
-        selectionMode="random_by_author",
         enabled=True,
     ),
     Schedule(
@@ -28,7 +27,6 @@ DEFAULT_SCHEDULES = [
         timezone="America/Chicago",
         pageIds=["x", POSTMILSTILL_FB_PAGE],
         quoteListId=HOPE_LIST_ID,
-        selectionMode="random_by_author",
         enabled=True,
     ),
 ]

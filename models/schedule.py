@@ -2,7 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-QuoteSelectionMode = Literal["sequential", "random_by_author"]
+OrderType = Literal["sequential", "random"]
 
 
 class Schedule(BaseModel):
@@ -19,11 +19,11 @@ class Schedule(BaseModel):
         default=None,
         description="Optional quote list/filter id (e.g. hope list UUID)",
     )
-    selectionMode: QuoteSelectionMode = Field(
+    orderType: OrderType = Field(
         default="sequential",
         description=(
-            "How to pick the next quote: sequential cursor through the list, "
-            "or random_by_author (uniform author, then random quote)"
+            "Quote pick order saved from admin ScheduleForm: sequential cursor "
+            "through list position order, or random uniform among eligible quotes"
         ),
     )
     enabled: bool = True

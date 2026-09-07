@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from bson.objectid import ObjectId
 
-from services.quote_rotation import get_next_quote, record_successful_post
+from services.quote_rotation import choose_next_quote_id, choose_quote_id, record_successful_post
 
 
 def _quote_doc(index: int, author: str | None = None) -> dict:
@@ -60,8 +60,8 @@ async def test_shared_cursor_advances_sequentially():
         mock_cursors.find_one_and_update = fake_find_one_and_update
         mock_history.find_one = AsyncMock(return_value=None)
 
-        first = await get_next_quote("list-1", ["109666208522653"], now=now)
-        second = await get_next_quote("list-1", ["109666208522653"], now=now)
+        first = await choose_quote_id("list-1", ["109666208522653"], order_type="sequential", now=now)
+        second = await choose_quote_id("list-1", ["109666208522653"], order_type="sequential", now=now)
 
     assert first["listIndex"] == 0
     assert second["listIndex"] == 1
@@ -92,76 +92,69 @@ async def test_skips_quote_posted_within_24h():
         mock_cursors.find_one_and_update = fake_find_one_and_update
         mock_history.find_one = fake_history_find_one
 
-        selected = await get_next_quote("list-1", ["109666208522653"], now=now)
+        selected = await choose_quote_id(
+            "list-1", ["109666208522653"], order_type="sequential", now=now
+        )
 
     assert selected["listIndex"] == 1
     assert selected["id"] != first_quote_id
 
 
 @pytest.mark.asyncio
-async def test_random_by_author_prefers_different_author():
-    quotes = [
-        _quote_doc(0, author="John Owen"),
-        _quote_doc(1, author="John Owen"),
-        _quote_doc(2, author="Tozer"),
-        _quote_doc(3, author="Ravenhill"),
-    ]
-    now = datetime(2026, 8, 20, 8, 0, tzinfo=timezone.utc)
-    owen_id = str(quotes[0]["_id"])
-
-    call_count = {"n": 0}
-
-    async def fake_history_find_one(filter_doc, *_args, **_kwargs):
-        call_count["n"] += 1
-        if "postedAt" in filter_doc and "$gte" in filter_doc["postedAt"]:
-            return None
-        if filter_doc.get("pageId"):
-            return {"quoteId": owen_id, "postedAt": now - timedelta(hours=12)}
-        return None
-
-    with (
-        patch("services.quote_rotation.quotes_collection") as mock_quotes,
-        patch("services.quote_rotation.post_history_collection") as mock_history,
-        patch("services.quote_rotation.random.choice", side_effect=["Tozer", quotes[2]]),
-    ):
-        mock_quotes.find = _fake_find_cursor(quotes)
-        mock_history.find_one = fake_history_find_one
-        mock_quotes.find_one = AsyncMock(return_value=quotes[0])
-
-        selected = await get_next_quote(
-            "list-1",
-            ["109666208522653"],
-            now=now,
-            selection_mode="random_by_author",
-        )
-
-    assert selected["author"] == "Tozer"
-
-
-@pytest.mark.asyncio
-async def test_random_by_author_does_not_use_cursor():
-    quotes = [_quote_doc(i) for i in range(3)]
+async def test_random_order_type_picks_uniformly_without_cursor():
+    quotes = [_quote_doc(i, author=f"Author {i}") for i in range(3)]
     now = datetime(2026, 8, 20, 8, 0, tzinfo=timezone.utc)
 
     with (
         patch("services.quote_rotation.quotes_collection") as mock_quotes,
         patch("services.quote_rotation.quote_list_cursors_collection") as mock_cursors,
         patch("services.quote_rotation.post_history_collection") as mock_history,
-        patch("services.quote_rotation.random.choice", side_effect=["Author 1", quotes[1]]),
+        patch("services.quote_rotation.random.choice", return_value=quotes[2]),
     ):
         mock_quotes.find = _fake_find_cursor(quotes)
         mock_cursors.update_one = AsyncMock()
         mock_cursors.find_one_and_update = AsyncMock()
         mock_history.find_one = AsyncMock(return_value=None)
 
-        await get_next_quote(
+        selected = await choose_quote_id(
             "list-1",
             ["109666208522653"],
+            order_type="random",
             now=now,
-            selection_mode="random_by_author",
         )
 
+    assert selected["listIndex"] == 2
+    assert selected["author"] == "Author 2"
     mock_cursors.find_one_and_update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_random_order_type_respects_24h_dedupe():
+    quotes = [_quote_doc(i) for i in range(3)]
+    now = datetime(2026, 8, 20, 8, 0, tzinfo=timezone.utc)
+    blocked_id = str(quotes[0]["_id"])
+
+    async def fake_history_find_one(filter_doc, *_args, **_kwargs):
+        if filter_doc.get("quoteId") == blocked_id:
+            return {"quoteId": blocked_id, "postedAt": now - timedelta(hours=2)}
+        return None
+
+    with (
+        patch("services.quote_rotation.quotes_collection") as mock_quotes,
+        patch("services.quote_rotation.post_history_collection") as mock_history,
+        patch("services.quote_rotation.random.choice", side_effect=lambda pool: pool[0]),
+    ):
+        mock_quotes.find = _fake_find_cursor(quotes)
+        mock_history.find_one = fake_history_find_one
+
+        selected = await choose_quote_id(
+            "list-1",
+            ["109666208522653"],
+            order_type="random",
+            now=now,
+        )
+
+    assert selected["id"] != blocked_id
 
 
 @pytest.mark.asyncio

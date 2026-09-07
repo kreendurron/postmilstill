@@ -19,7 +19,7 @@ async def list_schedules():
                 "timezone": doc.get("timezone", "America/Chicago"),
                 "pageIds": doc.get("pageIds", []),
                 "quoteListId": doc.get("quoteListId"),
-                "selectionMode": doc.get("selectionMode", "sequential"),
+                "orderType": doc.get("orderType", "sequential"),
                 "enabled": doc.get("enabled", True),
             }
         )

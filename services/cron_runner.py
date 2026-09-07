@@ -6,7 +6,7 @@ from database import schedules_collection
 from models.schedule import Schedule
 from services.facebook import FacebookPostError, post_to_facebook
 from services.post_formatter import format_quote_post
-from services.quote_rotation import get_next_quote, record_successful_post
+from services.quote_rotation import choose_quote_id, record_successful_post
 from services.x_twitter import XPostError, post_to_x
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ async def _load_schedules() -> list[Schedule]:
                 timezone=doc.get("timezone", "America/Chicago"),
                 pageIds=doc.get("pageIds", []),
                 quoteListId=doc.get("quoteListId"),
-                selectionMode=doc.get("selectionMode", "sequential"),
+                orderType=doc.get("orderType", "sequential"),
                 enabled=doc.get("enabled", True),
             )
         )
@@ -63,11 +63,11 @@ async def run_due_schedules(now: datetime | None = None) -> dict:
         }
 
         try:
-            quote = await get_next_quote(
+            quote = await choose_quote_id(
                 schedule.quoteListId,
                 schedule.pageIds,
+                order_type=schedule.orderType,
                 now=now,
-                selection_mode=schedule.selectionMode,
             )
             message = format_quote_post(quote)
             schedule_result["quoteId"] = quote.get("id")
